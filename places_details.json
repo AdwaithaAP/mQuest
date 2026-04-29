@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""
+QUESTO Backend Server — v3 Enhanced Recommendation Engine
+Tag-based scoring across all 4 quiz dimensions:
+  feeling · activity · environment · experience
+"""
+
+import json, os, random, urllib.request, urllib.parse, sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
+
+# ── Data loading ──────────────────────────────────────────────────────────────
+
+def load_json(filename):
+    filepath = os.path.join(os.path.dirname(__file__), filename)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"  Could not load {filename}: {e}")
+        return [] if not filename.endswith('details.json') else {"places": []}
+
+PLACES_DATA     = load_json('places_data.json')
+ACTIVITIES_DATA = load_json('activities_data.json')
+PLACES_DETAILS  = load_json('places_details.json')
+
+CREDENTIALS_DIR = os.path.join(os.path.dirname(__file__), 'credentials')
+os.makedirs(CREDENTIALS_DIR, exist_ok=True)
+
+# ── Coordinate lookup ─────────────────────────────────────────────────────────
+
+PLACE_COORDS = {
+    "Kerala Backwaters":{"lat":9.4981,"lng":76.3388},"Manali":{"lat":32.2396,"lng":77.1887},
+    "Goa Beaches":{"lat":15.2993,"lng":74.1240},"Rishikesh":{"lat":30.0869,"lng":78.2676},
+    "Coorg":{"lat":12.3375,"lng":75.8069},"Jaipur":{"lat":26.9124,"lng":75.7873},
+    "Munnar":{"lat":10.0889,"lng":77.0595},"Ooty":{"lat":11.4102,"lng":76.6950},
+    "Dharamshala":{"lat":32.2190,"lng":76.3234},"Spiti Valley":{"lat":32.2461,"lng":78.0337},
+    "Ladakh":{"lat":34.1526,"lng":77.5771},"Leh":{"lat":34.1526,"lng":77.5771},
+    "Auroville":{"lat":11.9350,"lng":79.8095},"Alleppey":{"lat":9.4981,"lng":76.3388},
+    "Mumbai":{"lat":19.0760,"lng":72.8777},"Delhi":{"lat":28.6139,"lng":77.2090},
+    "Hampi":{"lat":15.3350,"lng":76.4600},"Varanasi":{"lat":25.3176,"lng":82.9739},
+    "Agra":{"lat":27.1767,"lng":78.0081},"Udaipur":{"lat":24.5854,"lng":73.7125},
+    "Jodhpur":{"lat":26.2389,"lng":73.0243},"Darjeeling":{"lat":27.0360,"lng":88.2627},
+    "Andaman Islands":{"lat":11.7401,"lng":92.6586},"Havelock Island":{"lat":11.9811,"lng":92.9907},
+    "Neil Island":{"lat":11.8318,"lng":92.9270},"Nainital":{"lat":29.3919,"lng":79.4542},
+    "Shillong":{"lat":25.5788,"lng":91.8933},"Pondicherry":{"lat":11.9416,"lng":79.8083},
+    "Jaisalmer":{"lat":26.9157,"lng":70.9083},"Khajuraho":{"lat":24.8318,"lng":79.9199},
+    "Puri":{"lat":19.8135,"lng":85.8312},"Kodaikanal":{"lat":10.2381,"lng":77.4892},
+    "Tawang":{"lat":27.5860,"lng":91.8594},"Pangong Lake":{"lat":33.7560,"lng":78.6615},
+    "Gokarna":{"lat":14.5479,"lng":74.3188},"Pushkar":{"lat":26.4906,"lng":74.5510},
+    "Kasol":{"lat":32.0101,"lng":77.3148},"Mussoorie":{"lat":30.4598,"lng":78.0664},
+    "Chikmagalur":{"lat":13.3153,"lng":75.7754},"Mahabalipuram":{"lat":12.6269,"lng":80.1927},
+    "Varkala":{"lat":8.7379,"lng":76.7163},"Wayanad":{"lat":11.6854,"lng":76.1320},
+    "Jim Corbett":{"lat":29.5300,"lng":78.7747},"Ranthambore":{"lat":26.0173,"lng":76.5026},
+    "Bandhavgarh":{"lat":23.7225,"lng":81.0083},"Valley of Flowers":{"lat":30.7283,"lng":79.6058},
+    "Auli":{"lat":30.5218,"lng":79.5622},"Nubra Valley":{"lat":34.6867,"lng":77.5619},
+    "Bir Billing":{"lat":32.0387,"lng":76.7185},"Sandakphu":{"lat":27.1054,"lng":87.9959},
+    "Kabini":{"lat":11.8764,"lng":76.3536},"Majuli":{"lat":27.0056,"lng":94.1605},
+    "Ziro Valley":{"lat":27.5431,"lng":93.8278},"Kutch":{"lat":23.7337,"lng":70.0220},
+    "Gangtok":{"lat":27.3389,"lng":88.6065},"Pelling":{"lat":27.2960,"lng":88.1185},
+    "Kolkata":{"lat":22.5726,"lng":88.3639},"Bengaluru":{"lat":12.9716,"lng":77.5946},
+    "Mysuru":{"lat":12.2958,"lng":76.6394},"Hampta Pass":{"lat":32.2750,"lng":77.2917},
+    "Tarkarli":{"lat":16.0167,"lng":73.4667},"Lakshadweep":{"lat":8.8932,"lng":76.5019},
+    "Agatti Island":{"lat":10.8636,"lng":72.1908},"Marari Beach":{"lat":9.5965,"lng":76.2987},
+    "Lonavala":{"lat":18.7537,"lng":73.4061},"Dhanaulti":{"lat":30.5244,"lng":78.2529},
+    "Chopta":{"lat":30.4769,"lng":79.2263},"Malana":{"lat":32.0926,"lng":77.2842},
+    "Rohtang Pass":{"lat":32.3718,"lng":77.2434},"Dharamkot":{"lat":32.2369,"lng":76.3247},
+    "Coonoor":{"lat":11.3530,"lng":76.7959},"Mawlynnong":{"lat":25.2000,"lng":91.9000},
+    "Kaziranga":{"lat":26.5775,"lng":93.1711},"Orchha":{"lat":25.3519,"lng":78.6437},
+    "Chettinad":{"lat":10.2000,"lng":78.8333},"Kumarakom":{"lat":9.6196,"lng":76.4281},
+    "Masinagudi":{"lat":11.5667,"lng":76.6333},"Dooars":{"lat":26.7500,"lng":89.0000},
+    "Cherrapunji":{"lat":25.2688,"lng":91.7210},"Alsisar":{"lat":28.2833,"lng":75.2833},
+    "Khimsar":{"lat":27.1833,"lng":72.9000},"Mahabaleshwar":{"lat":17.9307,"lng":73.6477},
+    "Uttarkashi":{"lat":30.7268,"lng":78.4354},"Binsar":{"lat":29.7167,"lng":79.7333},
+    "Sundarbans":{"lat":21.9497,"lng":88.8861},"Satpura Tiger Reserve":{"lat":22.5459,"lng":78.5518},
+}
+
+# ── Tag maps — 4 quiz dimensions → searchable tag sets ────────────────────────
+
+FEELING_TAG_MAP = {
+    "happy":    ["happy","excited","bored"],
+    "sad":      ["sad","calm","spiritual","relaxed","solo"],
+    "stressed": ["stressed","calm","spiritual","nature","solo","relaxed"],
+    "excited":  ["excited","thrilling","adventure","happy","sports"],
+    "bored":    ["bored","adventure","excited","thrilling","culture"],
+    "relaxed":  ["relaxed","calm","romantic","nature"],
+}
+ACTIVITY_TAG_MAP = {
+    "adventure":   ["adventure","thrilling","sports"],
+    "food":        ["food","culture"],
+    "nature":      ["nature","wildlife","forests"],
+    "relaxation":  ["relaxed","calm","wellness"],
+    "culture":     ["culture","history","spiritual"],
+    "traveling":   ["adventure","excited","photography"],
+}
+ENVIRONMENT_TAG_MAP = {
+    "mountains":   ["mountains"],
+    "beaches":     ["beaches"],
+    "cities":      ["cities"],
+    "forests":     ["forests"],
+    "countryside": ["countryside"],
+}
+EXPERIENCE_TAG_MAP = {
+    "thrilling":  ["thrilling","adventure","excited","sports"],
+    "calm":       ["calm","relaxed","nature"],
+    "romantic":   ["romantic","couples"],
+    "spiritual":  ["spiritual","solo"],
+    "social":     ["friends","happy"],
+    "cultural":   ["culture","history","photography"],
+}
+
+def _expand_inputs(answers):
+    """Return a dict of tag sets, one per quiz dimension."""
+    def resolve(value, mapping):
+        if value in mapping:
+            return set(mapping[value])
+        for key in mapping:
+            if key in value or value in key:
+                return set(mapping[key])
+        return set()
+
+    return {
+        'feeling':     resolve(answers.get('feeling','').lower(), FEELING_TAG_MAP),
+        'activity':    resolve(answers.get('activity','').lower(), ACTIVITY_TAG_MAP),
+        'environment': resolve(answers.get('environment','').lower(), ENVIRONMENT_TAG_MAP),
+        'experience':  resolve(answers.get('experience','').lower(), EXPERIENCE_TAG_MAP),
+    }
+
+def _score_item(item_tags, dtags):
+    """Score a place or activity against the 4-dimension tag sets."""
+    tags = set(item_tags)
+    score  = sum(3 for t in dtags['environment'] if t in tags)
+    score += sum(2 for t in dtags['experience']  if t in tags)
+    score += sum(2 for t in dtags['activity']    if t in tags)
+    score += sum(1 for t in dtags['feeling']     if t in tags)
+    return score
+
+def _match_reason(place, dtags, raw):
+    """Compose a human-readable reason why this place was recommended."""
+    env  = raw.get('environment','destination')
+    exp  = raw.get('experience','amazing')
+    act  = raw.get('activity','exploring')
+    feel = raw.get('feeling','great')
+    opts = [
+        f"A {exp} escape into {env} — perfectly matched to your {feel} mood and love of {act}.",
+        f"Ideal for the {feel}-hearted traveller who craves a {exp} {env} {act} adventure.",
+        f"Your {feel} spirit meets a {exp} {env} experience — built for {act} at its finest.",
+        f"When {act} in {env} country with a {exp} twist is exactly what the mood calls for.",
+    ]
+    return opts[place.get('id', 0) % len(opts)]
+
+# ── Restaurant pool + scorer ──────────────────────────────────────────────────
+
+ALL_RESTAURANTS = [
+    {"id":1,"name":"The Summit Table","category":"Mountain Cuisine","env":"mountains",
+     "tags":["mountains","adventure","thrilling","excited","nature","food"],
+     "description":"Fireside dining at altitude — hearty Himachali stews, fresh trout, and hot chai after a long trail day.","rating":4.7,"price_range":"₹₹"},
+    {"id":2,"name":"Himalayan Hearth","category":"Local & Organic","env":"mountains",
+     "tags":["mountains","calm","relaxed","nature","solo","spiritual","food","stressed"],
+     "description":"Organic farm-to-table meals in a cedar cabin — Pahadi dals, nettle soup, and buckwheat rotis.","rating":4.6,"price_range":"₹₹"},
+    {"id":3,"name":"Altitude Brew Co.","category":"Craft Beer & Bites","env":"mountains",
+     "tags":["mountains","happy","excited","friends","bored","adventure","food"],
+     "description":"India's highest craft brewery — bold mountain IPAs, smoked meats, and live acoustic sessions.","rating":4.5,"price_range":"₹₹₹"},
+    {"id":4,"name":"The Tide Kitchen","category":"Seafood","env":"beaches",
+     "tags":["beaches","happy","excited","friends","food","relaxed","thrilling"],
+     "description":"Fresh-catch seafood on a clifftop perch — grilled lobster, Goan fish curry, and cold local beer.","rating":4.7,"price_range":"₹₹₹"},
+    {"id":5,"name":"Sand & Spice","category":"Coastal Fusion","env":"beaches",
+     "tags":["beaches","romantic","calm","couples","food","relaxed"],
+     "description":"Tables on the sand at sunset — tuna crudo, prawn tempura, and coconut sorbet by the water.","rating":4.8,"price_range":"₹₹₹₹"},
+    {"id":6,"name":"Fisherman's Wharf","category":"Local Seafood","env":"beaches",
+     "tags":["beaches","happy","calm","food","culture","nature","relaxed"],
+     "description":"No frills, all flavour. The catch of the day grilled over coconut husk by a weathered local cook.","rating":4.5,"price_range":"₹"},
+    {"id":7,"name":"The Lantern Room","category":"Heritage Dining","env":"cities",
+     "tags":["cities","romantic","culture","history","calm","couples","food"],
+     "description":"A century-old haveli transformed — candlelit Mughal cuisine with live sitar and courtyard fountain.","rating":4.8,"price_range":"₹₹₹₹"},
+    {"id":8,"name":"Street Food Safari","category":"Street Food","env":"cities",
+     "tags":["cities","happy","excited","bored","food","culture","friends","adventure"],
+     "description":"A curated walk through the city's most legendary street corners — chaat, kebabs, and masala chai.","rating":4.6,"price_range":"₹"},
+    {"id":9,"name":"The Rooftop Garden","category":"Contemporary Indian","env":"cities",
+     "tags":["cities","happy","romantic","excited","food","couples","culture"],
+     "description":"Skyline views and bold modern Indian cooking — amritsari fish tacos meet Delhi butter chicken.","rating":4.7,"price_range":"₹₹₹"},
+    {"id":10,"name":"The Canopy Cafe","category":"Forest Dining","env":"forests",
+     "tags":["forests","calm","nature","relaxed","romantic","couples","food","sad"],
+     "description":"Meals on a wooden deck above the treetops — millet bread, forest honey, and wild mushroom broths.","rating":4.7,"price_range":"₹₹"},
+    {"id":11,"name":"Jungle Camp Kitchen","category":"Campfire Cooking","env":"forests",
+     "tags":["forests","adventure","thrilling","excited","nature","wildlife","food","friends"],
+     "description":"Post-safari bonfire meals under the stars — slow-cooked dal, grilled tandoori, and chai by the fire.","rating":4.6,"price_range":"₹₹"},
+    {"id":12,"name":"Plantation Table","category":"Estate Cuisine","env":"forests",
+     "tags":["forests","calm","relaxed","nature","romantic","food","couples"],
+     "description":"Breakfast in a coffee estate with freshly pressed brew and locally sourced eggs and seasonal fruit.","rating":4.7,"price_range":"₹₹"},
+    {"id":13,"name":"The Village Kitchen","category":"Homestyle Regional","env":"countryside",
+     "tags":["countryside","calm","relaxed","culture","happy","food","spiritual","sad"],
+     "description":"A grandmother's kitchen opened to guests — regional thalis on wood-fired chulas with pure ghee.","rating":4.8,"price_range":"₹"},
+    {"id":14,"name":"Haveli Banquet","category":"Rajasthani Royal Cuisine","env":"countryside",
+     "tags":["countryside","romantic","culture","history","thrilling","couples","food","excited"],
+     "description":"Dine like royalty in a fort courtyard — dal baati churma, laal maas, and puppet show entertainment.","rating":4.9,"price_range":"₹₹₹₹"},
+    {"id":15,"name":"The Backwater Barge","category":"Houseboat Dining","env":"countryside",
+     "tags":["countryside","calm","romantic","relaxed","nature","couples","food","sad"],
+     "description":"A floating kitchen serving Kerala meals on banana leaves as you drift through lotus-filled canals.","rating":4.8,"price_range":"₹₹₹"},
+    {"id":16,"name":"The Healing Bowl","category":"Wellness Cafe","env":"any",
+     "tags":["stressed","sad","calm","spiritual","solo","nature","relaxed","food"],
+     "description":"Ayurvedic smoothies, immunity broths, and adaptogen bowls — designed to reset your body and mind.","rating":4.6,"price_range":"₹₹"},
+    {"id":17,"name":"The Social Kitchen","category":"All-Day Brunch","env":"any",
+     "tags":["happy","excited","friends","bored","food","culture","adventure"],
+     "description":"Loud, fun, and chaotic in the best way — build-your-own brunches and global street food mashups.","rating":4.5,"price_range":"₹₹"},
+    {"id":18,"name":"Terroir Wine & Dine","category":"Fine Dining","env":"any",
+     "tags":["romantic","calm","excited","couples","food","happy","thrilling"],
+     "description":"An intimate eight-course tasting menu pairing Indian regional produce with natural wines.","rating":4.9,"price_range":"₹₹₹₹"},
+]
+
+def _build_restaurants(dtags):
+    scored = []
+    for r in ALL_RESTAURANTS:
+        r_tags = set(r.get('tags', []))
+        score  = sum(3 for t in dtags['environment'] if t in r_tags)
+        score += sum(2 for t in dtags['experience']  if t in r_tags)
+        score += sum(2 for t in dtags['activity']    if t in r_tags)
+        score += sum(1 for t in dtags['feeling']     if t in r_tags)
+        if r.get('env') == 'any':
+            score = max(score, 1)   # always eligible as fallback
+        scored.append((score, r))
+    scored.sort(key=lambda x: (-x[0], random.random()))
+    results = []
+    for score, r in scored[:8]:
+        entry = {k: v for k, v in r.items() if k not in ('tags','env')}
+        entry['match_score'] = score
+        results.append(entry)
+    return results
+
+# ── Auth Engine ───────────────────────────────────────────────────────────────
+
+class AuthEngine:
+    @staticmethod
+    def signup(full_name, email, password):
+        if not all([full_name, email, password]):
+            return {'success':False,'message':'All fields are required'}, 400
+        path = os.path.join(CREDENTIALS_DIR, f'{email}.json')
+        if os.path.exists(path):
+            return {'success':False,'message':'Email already registered'}, 409
+        with open(path,'w') as f:
+            json.dump({'fullName':full_name,'email':email,'password':password,
+                       'createdAt':datetime.now().isoformat(),'lastLogin':None}, f, indent=2)
+        return {'success':True,'message':'Account created','user':{'fullName':full_name,'email':email}}, 201
+
+    @staticmethod
+    def login(email, password):
+        path = os.path.join(CREDENTIALS_DIR, f'{email}.json')
+        if not os.path.exists(path):
+            return {'success':False,'message':'Invalid email or password'}, 401
+        with open(path,'r') as f:
+            user = json.load(f)
+        if user['password'] != password:
+            return {'success':False,'message':'Invalid email or password'}, 401
+        user['lastLogin'] = datetime.now().isoformat()
+        with open(path,'w') as f:
+            json.dump(user, f, indent=2)
+        return {'success':True,'message':'Login successful','user':{'fullName':user['fullName'],'email':user['email']}}, 200
+
+# ── Mood Engine v3 ────────────────────────────────────────────────────────────
+
+class MoodEngine:
+
+    @staticmethod
+    def analyze(answers):
+        feeling     = answers.get('feeling','').lower()
+        activity    = answers.get('activity','').lower()
+        experience  = answers.get('experience','').lower()
+        environment = answers.get('environment','').lower()
+
+        s = {m:0 for m in ['happy','sad','stressed','excited','bored','relaxed']}
+        if feeling in s: s[feeling] += 3
+        if 'adventure' in activity:   s['excited']+=2; s['happy']+=1
+        elif 'food' in activity:       s['happy']+=2
+        elif 'relaxation' in activity: s['relaxed']+=2
+        elif 'traveling' in activity:  s['excited']+=2
+        elif 'nature' in activity:     s['relaxed']+=1; s['happy']+=1
+        if 'thrilling' in experience:  s['excited']+=2
+        elif 'calm' in experience:     s['relaxed']+=2
+        elif 'romantic' in experience: s['relaxed']+=1; s['happy']+=1
+        elif 'spiritual' in experience:s['relaxed']+=1
+
+        dominant = max(s, key=s.get)
+        return {
+            'dominant_mood': dominant,
+            'mood_scores':   s,
+            'inputs': {
+                'feeling':     feeling,
+                'activity':    activity,
+                'environment': environment,
+                'experience':  experience,
+            }
+        }
+
+    @staticmethod
+    def recommend(mood_profile):
+        raw    = mood_profile.get('inputs', {})
+        dtags  = _expand_inputs(raw)
+
+        # Score and rank places
+        scored_places = []
+        for place in PLACES_DATA:
+            score = _score_item(place.get('tags', []), dtags)
+            scored_places.append((score, place))
+        scored_places.sort(key=lambda x: (-x[0], random.random()))
+
+        # Pool top 14, shuffle within ties, take 8
+        pool_p = scored_places[:14]
+        random.shuffle(pool_p)
+        top_places = sorted(pool_p, key=lambda x: -x[0])[:8]
+
+        result_places = []
+        for score, place in top_places:
+            p = dict(place)
+            p['match_score']  = score
+            p['match_reason'] = _match_reason(p, dtags, raw)
+            for key in [p['name'], p['name'].split('(')[0].strip()]:
+                if key in PLACE_COORDS:
+                    p['coordinates'] = PLACE_COORDS[key]
+                    break
+            result_places.append(p)
+
+        # Score and rank activities
+        scored_acts = []
+        for act in ACTIVITIES_DATA:
+            score = _score_item(act.get('tags', []), dtags)
+            scored_acts.append((score, act))
+        scored_acts.sort(key=lambda x: (-x[0], random.random()))
+
+        pool_a = scored_acts[:12]
+        random.shuffle(pool_a)
+        top_acts = sorted(pool_a, key=lambda x: -x[0])[:8]
+
+        result_acts = []
+        for score, act in top_acts:
+            a = dict(act)
+            a['match_score'] = score
+            result_acts.append(a)
+
+        return {
+            'places':      result_places,
+            'activities':  result_acts,
+            'restaurants': _build_restaurants(dtags),
+        }
+
+# ── Place Detail ──────────────────────────────────────────────────────────────
+
+class PlacesDetail:
+    @staticmethod
+    def get(name):
+        lower = name.lower()
+        for p in PLACES_DETAILS.get('places', []):
+            if lower in p['name'].lower():
+                if 'coordinates' not in p and p['name'] in PLACE_COORDS:
+                    p['coordinates'] = PLACE_COORDS[p['name']]
+                return p
+        for p in PLACES_DATA:
+            if lower in p['name'].lower():
+                coords = PLACE_COORDS.get(p['name'], {"lat":0,"lng":0})
+                return {
+                    "id":p.get("id"),"name":p["name"],"category":p.get("category",""),
+                    "state":p.get("state","India"),"address":f"{p['name']}, {p.get('state','India')}",
+                    "coordinates":coords,"rating":p.get("rating"),"review_count":0,
+                    "price_level":"Varies","phone":"—","website":"",
+                    "opening_hours":{"open_now":True,"weekday_text":[]},
+                    "photos":[],"reviews":[],"description":p.get("description",""),
+                    "tags":p.get("tags",[]),"best_time":p.get("best_for",""),
+                }
+        return None
+
+# ── HTTP Handler ──────────────────────────────────────────────────────────────
+
+CORS = {
+    'Access-Control-Allow-Origin':  '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+}
+
+class Handler(BaseHTTPRequestHandler):
+    def _cors(self):
+        for k,v in CORS.items(): self.send_header(k,v)
+    def _json(self, code, data):
+        body = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type','application/json; charset=utf-8')
+        self._cors(); self.end_headers(); self.wfile.write(body)
+    def _body(self):
+        length = int(self.headers.get('Content-Length',0))
+        raw = self.rfile.read(length).decode('utf-8')
+        try: return json.loads(raw)
+        except: return {}
+
+    def do_GET(self):
+        if self.path=='/health':
+            self._json(200,{"status":"ok","version":"3.0","places":len(PLACES_DATA),"activities":len(ACTIVITIES_DATA)})
+        elif self.path=='/places':
+            self._json(200,{"count":len(PLACES_DATA),"places":PLACES_DATA})
+        elif self.path=='/activities':
+            self._json(200,{"count":len(ACTIVITIES_DATA),"activities":ACTIVITIES_DATA})
+        elif self.path=='/api/coords':
+            self._json(200,{"coords":PLACE_COORDS})
+        else:
+            self._json(404,{"error":"Not found"})
+
+    def do_POST(self):
+        data = self._body()
+        if self.path=='/api/signup':
+            r,c = AuthEngine.signup(data.get('fullName'),data.get('email'),data.get('password'))
+            self._json(c,r)
+        elif self.path=='/api/login':
+            r,c = AuthEngine.login(data.get('email'),data.get('password'))
+            self._json(c,r)
+        elif self.path=='/recommend':
+            mood = MoodEngine.analyze(data)
+            recs = MoodEngine.recommend(mood)
+            raw  = mood['inputs']
+            self._json(200,{
+                "success":True,
+                "dominant_mood":mood['dominant_mood'],
+                "mood_scores":mood['mood_scores'],
+                "inputs":raw,
+                "places":recs['places'],
+                "activities":recs['activities'],
+                "restaurants":recs['restaurants'],
+                "message":(
+                    f"Curated for a {raw.get('feeling','great')} mood — "
+                    f"{raw.get('experience','amazing')} {raw.get('environment','destination')} "
+                    f"perfect for {raw.get('activity','exploring')}!"
+                ),
+            })
+        elif self.path=='/analyze-mood':
+            mood = MoodEngine.analyze(data)
+            self._json(200,{"success":True,**mood})
+        elif self.path=='/api/place-detail':
+            place = PlacesDetail.get(data.get('place_name',''))
+            if place: self._json(200,{"success":True,"place":place})
+            else: self._json(404,{"success":False,"message":"Not found"})
+        elif self.path=='/api/overpass':
+            query = data.get('query','')
+            if not query: self._json(400,{"success":False,"message":"Missing query"}); return
+            try:
+                encoded = urllib.parse.urlencode({'data':query}).encode()
+                req = urllib.request.Request(
+                    'https://overpass-api.de/api/interpreter', data=encoded,
+                    headers={'Content-Type':'application/x-www-form-urlencoded','User-Agent':'QUESTO/3.0'})
+                with urllib.request.urlopen(req,timeout=20) as resp:
+                    result = json.loads(resp.read().decode())
+                self._json(200,{"success":True,"data":result})
+            except Exception as e:
+                self._json(502,{"success":False,"message":str(e)})
+        else:
+            self._json(404,{"error":"Endpoint not found"})
+
+    def do_OPTIONS(self):
+        self.send_response(200); self._cors(); self.end_headers()
+
+    def log_message(self, fmt, *args):
+        print(f"  [{self.client_address[0]}] {fmt%args}")
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def run(port=8000):
+    server = HTTPServer(('',port), Handler)
+    print(f"""
++------------------------------------------+
+|    QUESTO Backend  v3 Enhanced           |
++------------------------------------------+
+|  http://localhost:{port}                   |
+|  {len(PLACES_DATA)} places  |  {len(ACTIVITIES_DATA)} activities loaded       |
+|                                          |
+|  POST /recommend        Tag-scored recs  |
+|  POST /analyze-mood     Mood profile     |
+|  POST /api/place-detail Place detail     |
+|  POST /api/overpass     OSM proxy        |
+|  GET  /places  /activities  /api/coords  |
++------------------------------------------+
+  Press Ctrl+C to stop
+""")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n  Stopped."); server.server_close()
+
+if __name__=='__main__':
+    port = int(sys.argv[1]) if len(sys.argv)>1 else 8000
+    run(port)
